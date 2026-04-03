@@ -5,7 +5,7 @@
 ## Version: 001
 ## X-License: GPL v2
 ## X-Category: Miscellaneous
-## IconTexture: 132925
+## IconTexture: 135992
 ## SavedVariables: BazFlightZoomSV
 
 Core.lua
