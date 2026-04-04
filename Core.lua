@@ -1,96 +1,104 @@
+-- BazFlightZoom Core
+-- Auto-zoom camera and minimap when flying, powered by BazCore
+
 local ADDON_NAME = "BazFlightZoom"
 
--- Saved variables and defaults
-local DEFAULTS = {
-    enabled     = true,
-    zoomCamera  = true,
-    zoomMinimap = true,
-}
+local addon
+addon = BazCore:RegisterAddon(ADDON_NAME, {
+    title = "BazFlightZoom",
+    savedVariable = "BazFlightZoomSV",
+    profiles = true,
+    defaults = {
+        enabled        = true,
+        zoomCamera     = true,
+        zoomMinimap    = true,
+        cameraDistance  = 50,
+        minimapZoom    = 0,
+        zoomSpeed      = 0,
+        zoomDelay      = 0.3,
+        groundMount    = false,
+        groundDistance  = 20,
+    },
 
-local db
-local savedCameraZoom = nil
-local savedMinimapZoom = nil
-local isZoomedOut = false
-local flyCheckTicker = nil
+    slash = { "/bfz", "/bazflightzoom" },
+    commands = {
+        camera = {
+            desc = "Toggle camera zoom",
+            handler = function()
+                local new = not addon:GetSetting("zoomCamera")
+                addon:SetSetting("zoomCamera", new)
+                addon:Print("Camera zoom " .. (new and "|cff00ff00ON|r" or "|cffff4444OFF|r"))
+            end,
+        },
+        minimap = {
+            desc = "Toggle minimap zoom",
+            handler = function()
+                local new = not addon:GetSetting("zoomMinimap")
+                addon:SetSetting("zoomMinimap", new)
+                addon:Print("Minimap zoom " .. (new and "|cff00ff00ON|r" or "|cffff4444OFF|r"))
+            end,
+        },
+    },
 
--- Localized globals
-local IsMounted = IsMounted
-local IsFlying = IsFlying
-local GetCameraZoom = GetCameraZoom
-local CameraZoomOut = CameraZoomOut
-local CameraZoomIn = CameraZoomIn
+    minimap = {
+        label = "BazFlightZoom",
+        icon = 135992,
+    },
 
----------------------------------------------------------------------------
--- Helpers
----------------------------------------------------------------------------
+    onReady = function(self)
+        self:SetupEvents()
+    end,
+})
 
-local function GetSetting(key)
-    if db and db[key] ~= nil then return db[key] end
-    return DEFAULTS[key]
+-- db proxy
+local dbProxy = {}
+local profileProxy = setmetatable({}, {
+    __index = function(_, key)
+        local sv = _G["BazFlightZoomSV"]
+        if not sv then return nil end
+        local profileName = BazCore:GetActiveProfile(ADDON_NAME)
+        local profile = sv.profiles and sv.profiles[profileName]
+        if profile then return profile[key] end
+        return nil
+    end,
+    __newindex = function(_, key, value)
+        local sv = _G["BazFlightZoomSV"]
+        if not sv then return end
+        local profileName = BazCore:GetActiveProfile(ADDON_NAME)
+        if not sv.profiles then sv.profiles = {} end
+        if not sv.profiles[profileName] then sv.profiles[profileName] = {} end
+        sv.profiles[profileName][key] = value
+    end,
+})
+dbProxy.profile = profileProxy
+addon.db = dbProxy
+
+function addon:GetSetting(key)
+    return self.db.profile[key]
 end
 
-local function SetSetting(key, value)
-    BazFlightZoomSV = BazFlightZoomSV or {}
-    BazFlightZoomSV[key] = value
-    db = BazFlightZoomSV
+function addon:SetSetting(key, value)
+    self.db.profile[key] = value
 end
 
 ---------------------------------------------------------------------------
 -- Zoom Logic
 ---------------------------------------------------------------------------
 
-local function ZoomOut()
-    if isZoomedOut then return end
+local savedCameraZoom = nil
+local savedMinimapZoom = nil
+local isZoomedOut = false
+local zoomType = nil -- "flying" or "ground"
 
-    -- Save current zoom levels
-    if GetSetting("zoomCamera") then
-        savedCameraZoom = GetCameraZoom()
-        CameraZoomOut(50) -- zoom to max
-    end
+local IsMounted = IsMounted
+local GetCameraZoom = GetCameraZoom
+local CameraZoomOut = CameraZoomOut
+local CameraZoomIn = CameraZoomIn
 
-    if GetSetting("zoomMinimap") then
-        savedMinimapZoom = Minimap:GetZoom()
-        Minimap:SetZoom(0) -- fully zoomed out
-    end
-
-    isZoomedOut = true
-end
-
-local function ZoomRestore()
-    if not isZoomedOut then return end
-
-    -- Restore camera
-    if savedCameraZoom and GetSetting("zoomCamera") then
-        local current = GetCameraZoom()
-        local delta = current - savedCameraZoom
-        if delta > 0 then
-            CameraZoomIn(delta)
-        elseif delta < 0 then
-            CameraZoomOut(-delta)
-        end
-        savedCameraZoom = nil
-    end
-
-    -- Restore minimap
-    if savedMinimapZoom and GetSetting("zoomMinimap") then
-        Minimap:SetZoom(savedMinimapZoom)
-        savedMinimapZoom = nil
-    end
-
-    isZoomedOut = false
-end
-
-local function CancelFlyCheck()
-    if flyCheckTicker then
-        flyCheckTicker:Cancel()
-        flyCheckTicker = nil
-    end
-end
-
--- Mount type IDs that can fly (from Warcraft wiki MountTypeID)
+-- Mount type IDs that can fly
 local FLYING_MOUNT_TYPES = {
     [230] = true, -- Flying
-    [241] = true, -- AQ40 (special, but has flight)
+    [241] = true, -- AQ40
     [247] = true, -- Red Flying Cloud
     [248] = true, -- Flying (old)
     [402] = true, -- Dragonriding
@@ -99,11 +107,6 @@ local FLYING_MOUNT_TYPES = {
 }
 
 local function IsOnFlyingMount()
-    for i = 1, C_MountJournal.GetNumMounts() do
-        local name, spellID, _, _, _, _, _, _, _, _, _, mountID = C_MountJournal.GetMountInfoByID(i)
-        -- skip
-    end
-    -- Check active mount via buff
     for i = 1, 40 do
         local auraData = C_UnitAuras.GetBuffDataByIndex("player", i)
         if not auraData then break end
@@ -114,10 +117,7 @@ local function IsOnFlyingMount()
                 local name, mSpellID, _, _, _, _, _, _, _, _, _, mID = C_MountJournal.GetMountInfoByID(mountID)
                 if mSpellID == spellID then
                     local _, _, _, _, mountTypeID = C_MountJournal.GetMountInfoExtraByID(mountID)
-                    if FLYING_MOUNT_TYPES[mountTypeID] then
-                        return true
-                    end
-                    return false
+                    return FLYING_MOUNT_TYPES[mountTypeID] == true
                 end
             end
         end
@@ -125,20 +125,101 @@ local function IsOnFlyingMount()
     return false
 end
 
+local function ZoomCameraTo(targetDistance)
+    local current = GetCameraZoom()
+    local delta = targetDistance - current
+    if delta > 0.5 then
+        CameraZoomOut(delta)
+    elseif delta < -0.5 then
+        CameraZoomIn(-delta)
+    end
+end
+
+local function SmoothZoomTo(targetDistance, speed)
+    local steps = math.max(1, math.floor(speed * 10))
+    local i = 0
+    C_Timer.NewTicker(0.03, function(ticker)
+        i = i + 1
+        if i >= steps then
+            ticker:Cancel()
+            ZoomCameraTo(targetDistance)
+            return
+        end
+        local current = GetCameraZoom()
+        local remaining = steps - i
+        local stepSize = (targetDistance - current) / remaining
+        if stepSize > 0 then CameraZoomOut(stepSize)
+        elseif stepSize < 0 then CameraZoomIn(-stepSize) end
+    end)
+end
+
+local function DoZoom(targetDistance)
+    if addon:GetSetting("zoomCamera") then
+        savedCameraZoom = GetCameraZoom()
+        local current = savedCameraZoom
+        if math.abs(targetDistance - current) > 0.5 then
+            local speed = addon:GetSetting("zoomSpeed") or 0
+            if speed > 0 then
+                SmoothZoomTo(targetDistance, speed)
+            else
+                ZoomCameraTo(targetDistance)
+            end
+        end
+    end
+
+    if addon:GetSetting("zoomMinimap") then
+        savedMinimapZoom = Minimap:GetZoom()
+        local targetZoom = addon:GetSetting("minimapZoom") or 0
+        C_Timer.After(0.2, function()
+            if isZoomedOut then
+                Minimap:SetZoom(targetZoom)
+            end
+        end)
+    end
+
+    isZoomedOut = true
+end
+
+local function ZoomRestore()
+    if not isZoomedOut then return end
+
+    if savedCameraZoom and addon:GetSetting("zoomCamera") then
+        local speed = addon:GetSetting("zoomSpeed") or 0
+        if speed > 0 then
+            SmoothZoomTo(savedCameraZoom, speed)
+        else
+            ZoomCameraTo(savedCameraZoom)
+        end
+        savedCameraZoom = nil
+    end
+
+    if savedMinimapZoom and addon:GetSetting("zoomMinimap") then
+        Minimap:SetZoom(savedMinimapZoom)
+        savedMinimapZoom = nil
+    end
+
+    isZoomedOut = false
+    zoomType = nil
+end
+
 local function OnMountChanged()
-    if not GetSetting("enabled") then return end
+    if not addon:GetSetting("enabled") then return end
 
     if IsMounted() then
-        -- Delay slightly to let mount buff apply
-        C_Timer.After(0.3, function()
+        local delay = addon:GetSetting("zoomDelay") or 0.3
+        C_Timer.After(math.max(0.1, delay), function()
             if not IsMounted() then return end
+            if isZoomedOut then return end
+
             if IsOnFlyingMount() then
-                ZoomOut()
+                zoomType = "flying"
+                DoZoom(addon:GetSetting("cameraDistance") or 50)
+            elseif addon:GetSetting("groundMount") then
+                zoomType = "ground"
+                DoZoom(addon:GetSetting("groundDistance") or 20)
             end
         end)
     else
-        -- Dismounted
-        CancelFlyCheck()
         ZoomRestore()
     end
 end
@@ -147,117 +228,132 @@ end
 -- Events
 ---------------------------------------------------------------------------
 
-local frame = CreateFrame("Frame")
-frame:RegisterEvent("ADDON_LOADED")
-frame:RegisterEvent("PLAYER_MOUNT_DISPLAY_CHANGED")
-
-frame:SetScript("OnEvent", function(self, event, arg1)
-    if event == "ADDON_LOADED" and arg1 == ADDON_NAME then
-        BazFlightZoomSV = BazFlightZoomSV or {}
-        db = BazFlightZoomSV
-        for k, v in pairs(DEFAULTS) do
-            if db[k] == nil then db[k] = v end
-        end
-        print("|cff3399ffBazFlightZoom|r loaded. Type |cff00ff00/bfz|r for commands.")
-        self:UnregisterEvent("ADDON_LOADED")
-    elseif event == "PLAYER_MOUNT_DISPLAY_CHANGED" then
-        -- Small delay to let mount state settle
+function addon:SetupEvents()
+    local frame = CreateFrame("Frame")
+    frame:RegisterEvent("PLAYER_MOUNT_DISPLAY_CHANGED")
+    frame:SetScript("OnEvent", function()
         C_Timer.After(0.1, OnMountChanged)
-    end
-end)
-
----------------------------------------------------------------------------
--- Slash Commands
----------------------------------------------------------------------------
-
-SLASH_BAZFLIGHTZOOM1 = "/bfz"
-SLASH_BAZFLIGHTZOOM2 = "/bazflightzoom"
-SlashCmdList["BAZFLIGHTZOOM"] = function(msg)
-    local cmd = strlower(strtrim(msg))
-    if cmd == "" or cmd == "toggle" then
-        local new = not GetSetting("enabled")
-        SetSetting("enabled", new)
-        print("|cff3399ffBazFlightZoom|r: " .. (new and "|cff00ff00Enabled|r" or "|cffff4444Disabled|r"))
-    elseif cmd == "camera" then
-        local new = not GetSetting("zoomCamera")
-        SetSetting("zoomCamera", new)
-        print("|cff3399ffBazFlightZoom|r: Camera zoom " .. (new and "|cff00ff00ON|r" or "|cffff4444OFF|r"))
-    elseif cmd == "minimap" then
-        local new = not GetSetting("zoomMinimap")
-        SetSetting("zoomMinimap", new)
-        print("|cff3399ffBazFlightZoom|r: Minimap zoom " .. (new and "|cff00ff00ON|r" or "|cffff4444OFF|r"))
-    elseif cmd == "settings" then
-        if BazFlightZoom_SettingsCategory then
-            Settings.OpenToCategory(BazFlightZoom_SettingsCategory:GetID())
-        end
-    elseif cmd == "help" then
-        print("|cff3399ffBazFlightZoom|r commands:")
-        print("  |cff00ff00/bfz|r - Toggle addon on/off")
-        print("  |cff00ff00/bfz camera|r - Toggle camera zoom")
-        print("  |cff00ff00/bfz minimap|r - Toggle minimap zoom")
-        print("  |cff00ff00/bfz settings|r - Open settings")
-    else
-        print("|cff3399ffBazFlightZoom|r: Unknown command. Type |cff00ff00/bfz help|r")
-    end
+    end)
 end
 
 ---------------------------------------------------------------------------
--- Settings Panel
+-- Options (BazCore OptionsPanel)
 ---------------------------------------------------------------------------
 
-local function InitSettings()
-    local panel = CreateFrame("Frame", nil, UIParent)
-    panel:Hide()
+local function GetOptionsTable()
+    return {
+        name = "BazFlightZoom",
+        subtitle = "Auto-zoom camera and minimap when flying",
+        type = "group",
+        args = {
+            generalHeader = {
+                order = 1,
+                type = "header",
+                name = "General",
+            },
+            enabled = {
+                order = 2,
+                type = "toggle",
+                name = "Enable BazFlightZoom",
+                desc = "Toggle the addon on or off",
+                get = function() return addon:GetSetting("enabled") ~= false end,
+                set = function(_, val) addon:SetSetting("enabled", val) end,
+            },
 
-    local PAD = 16
-    local CBSIZE = 20
-    local yPos = -PAD
+            cameraHeader = {
+                order = 10,
+                type = "header",
+                name = "Camera",
+            },
+            zoomCamera = {
+                order = 11,
+                type = "toggle",
+                name = "Zoom Camera Out",
+                desc = "Zoom the game camera when mounted",
+                get = function() return addon:GetSetting("zoomCamera") ~= false end,
+                set = function(_, val) addon:SetSetting("zoomCamera", val) end,
+            },
+            cameraDistance = {
+                order = 12,
+                type = "range",
+                name = "Flight Camera Distance",
+                min = 5, max = 50, step = 1,
+                get = function() return addon:GetSetting("cameraDistance") or 50 end,
+                set = function(_, val) addon:SetSetting("cameraDistance", val) end,
+            },
+            zoomSpeed = {
+                order = 13,
+                type = "range",
+                name = "Zoom Speed",
+                desc = "0 = instant, higher = slower smooth transition",
+                min = 0, max = 3, step = 0.1,
+                get = function() return addon:GetSetting("zoomSpeed") or 0 end,
+                set = function(_, val) addon:SetSetting("zoomSpeed", val) end,
+            },
+            zoomDelay = {
+                order = 14,
+                type = "range",
+                name = "Zoom Delay (sec)",
+                desc = "Wait before zooming after mounting",
+                min = 0.1, max = 3, step = 0.1,
+                get = function() return addon:GetSetting("zoomDelay") or 0.3 end,
+                set = function(_, val) addon:SetSetting("zoomDelay", val) end,
+            },
 
-    local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    title:SetPoint("TOPLEFT", PAD, yPos)
-    title:SetText("BazFlightZoom")
-    yPos = yPos - 20
+            minimapHeader = {
+                order = 20,
+                type = "header",
+                name = "Minimap",
+            },
+            zoomMinimap = {
+                order = 21,
+                type = "toggle",
+                name = "Zoom Minimap Out",
+                desc = "Zoom the minimap when flying",
+                get = function() return addon:GetSetting("zoomMinimap") ~= false end,
+                set = function(_, val) addon:SetSetting("zoomMinimap", val) end,
+            },
+            minimapZoom = {
+                order = 22,
+                type = "range",
+                name = "Minimap Zoom Level",
+                desc = "0 = fully zoomed out, 5 = close",
+                min = 0, max = 5, step = 1,
+                get = function() return addon:GetSetting("minimapZoom") or 0 end,
+                set = function(_, val) addon:SetSetting("minimapZoom", val) end,
+            },
 
-    local sub = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    sub:SetPoint("TOPLEFT", PAD, yPos)
-    sub:SetText("Automatically zooms out when flying, restores on dismount")
-    sub:SetTextColor(0.6, 0.6, 0.6)
-    yPos = yPos - 30
-
-    local function Checkbox(key, labelText, descText)
-        local cb = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
-        cb:SetPoint("TOPLEFT", PAD, yPos)
-        cb:SetSize(CBSIZE, CBSIZE)
-        cb:SetChecked(GetSetting(key))
-
-        local label = cb:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-        label:SetPoint("LEFT", cb, "RIGHT", 4, 0)
-        label:SetText(labelText)
-
-        cb:SetScript("OnClick", function(self)
-            SetSetting(key, self:GetChecked())
-        end)
-        yPos = yPos - CBSIZE - 2
-
-        if descText then
-            local desc = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-            desc:SetPoint("TOPLEFT", PAD + CBSIZE + 4, yPos)
-            desc:SetText(descText)
-            desc:SetTextColor(0.5, 0.5, 0.5)
-            desc:SetWidth(400)
-            desc:SetJustifyH("LEFT")
-            yPos = yPos - 16
-        end
-        yPos = yPos - 8
-    end
-
-    Checkbox("enabled", "Enable BazFlightZoom", "Toggle the addon on or off")
-    Checkbox("zoomCamera", "Zoom Camera Out", "Zoom the game camera to max distance while flying")
-    Checkbox("zoomMinimap", "Zoom Minimap Out", "Zoom the minimap to maximum range while flying")
-
-    local category = Settings.RegisterCanvasLayoutCategory(panel, "BazFlightZoom")
-    Settings.RegisterAddOnCategory(category)
-    BazFlightZoom_SettingsCategory = category
+            groundHeader = {
+                order = 30,
+                type = "header",
+                name = "Ground Mounts",
+            },
+            groundMount = {
+                order = 31,
+                type = "toggle",
+                name = "Zoom on Ground Mounts",
+                desc = "Also zoom out when on a ground mount",
+                get = function() return addon:GetSetting("groundMount") or false end,
+                set = function(_, val) addon:SetSetting("groundMount", val) end,
+            },
+            groundDistance = {
+                order = 32,
+                type = "range",
+                name = "Ground Camera Distance",
+                min = 5, max = 50, step = 1,
+                get = function() return addon:GetSetting("groundDistance") or 20 end,
+                set = function(_, val) addon:SetSetting("groundDistance", val) end,
+            },
+        },
+    }
 end
 
-EventUtil.ContinueOnAddOnLoaded(ADDON_NAME, InitSettings)
+addon.config.onLoad = function(self)
+    BazCore:RegisterOptionsTable(ADDON_NAME, GetOptionsTable)
+    BazCore:AddToSettings(ADDON_NAME, "BazFlightZoom")
+
+    BazCore:RegisterOptionsTable(ADDON_NAME .. "-Profiles", function()
+        return BazCore:GetProfileOptionsTable(ADDON_NAME)
+    end)
+    BazCore:AddToSettings(ADDON_NAME .. "-Profiles", "Profiles", ADDON_NAME)
+end
