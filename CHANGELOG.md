@@ -1,5 +1,9 @@
 # BazFlightZoom Changelog
 
+## 003 - Audit Fixes
+- Removed manual profile proxy (now auto-wired by BazCore)
+- Category changed to "Baz Suite"
+
 ## 002 - BazCore Migration + New Features
 - Migrated to BazCore framework (profiles, settings panel, minimap button)
 - Configurable camera distance (5-50, default max)
