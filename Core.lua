@@ -81,8 +81,15 @@ local function IsOnFlyingMount()
     for i = 1, 40 do
         local auraData = C_UnitAuras.GetBuffDataByIndex("player", i)
         if not auraData then break end
-        local spellID = auraData.spellId
-        if spellID then
+        local rawSpellID = auraData.spellId
+        if rawSpellID then
+            -- Strip secret number taint (Midnight)
+            local ok, cleanID = pcall(function() return rawSpellID + 0 end)
+            if not ok then
+                ok, cleanID = pcall(function() return tonumber(string.format("%d", rawSpellID)) end)
+            end
+            local spellID = ok and cleanID or nil
+            if not spellID then break end
             local mountIDs = C_MountJournal.GetMountIDs()
             for _, mountID in ipairs(mountIDs) do
                 local name, mSpellID, _, _, _, _, _, _, _, _, _, mID = C_MountJournal.GetMountInfoByID(mountID)
