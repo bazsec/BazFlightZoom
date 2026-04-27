@@ -11,7 +11,7 @@ BazCore:RegisterUserGuide("BazFlightZoom", {
         {
             title = "Welcome",
             blocks = {
-                { type = "lead", text = "BazFlightZoom (BFZ) detects when you mount a flying mount and smoothly zooms your camera out for a full view of the world. When you dismount, it restores your previous camera and minimap zoom levels — you're right back where you started." },
+                { type = "lead", text = "BazFlightZoom (BFZ) detects when you mount a flying mount and smoothly zooms your camera out for a full view of the world. When you dismount, it restores your previous camera and minimap zoom levels - you're right back where you started." },
                 { type = "note", style = "tip", text = "No keybinds. No macros. No interaction needed." },
             },
         },
@@ -19,7 +19,7 @@ BazCore:RegisterUserGuide("BazFlightZoom", {
             title = "How It Works",
             blocks = {
                 { type = "paragraph", text = "BFZ scans your active buffs for the flying-mount aura on a short interval. When detected, it kicks off the zoom; when the aura drops, it restores your previous values." },
-                { type = "note", style = "info", text = "Uses CVars only — no secure frame interaction, fully combat-safe." },
+                { type = "note", style = "info", text = "Uses CVars only - no secure frame interaction, fully combat-safe." },
             },
         },
         {
@@ -29,9 +29,9 @@ BazCore:RegisterUserGuide("BazFlightZoom", {
                 { type = "table",
                   columns = { "Setting", "Range", "Default" },
                   rows = {
-                      { "Max Distance", "5–50",  "50 (the max WoW allows)" },
+                      { "Max Distance", "5-50",  "50 (the max WoW allows)" },
                       { "Smooth Zoom",  "on/off", "on" },
-                      { "Zoom Delay",   "0–3 s",  "0.3 s" },
+                      { "Zoom Delay",   "0-3 s",  "0.3 s" },
                   },
                 },
                 { type = "h3", text = "Smooth Zoom" },
@@ -50,7 +50,7 @@ BazCore:RegisterUserGuide("BazFlightZoom", {
         {
             title = "Ground Mounts",
             blocks = {
-                { type = "paragraph", text = "Optional separate zoom for ground mounts with its own distance setting. Disabled by default — most users only want the flight zoom — but if you also like a wider view while ground-riding, enable it and set your preferred distance." },
+                { type = "paragraph", text = "Optional separate zoom for ground mounts with its own distance setting. Disabled by default - most users only want the flight zoom - but if you also like a wider view while ground-riding, enable it and set your preferred distance." },
             },
         },
         {
@@ -69,7 +69,7 @@ BazCore:RegisterUserGuide("BazFlightZoom", {
                       { "/bfz",           "Open the BazFlightZoom settings page" },
                       { "/bfz camera",    "Toggle camera zoom on/off" },
                       { "/bfz minimap",   "Toggle minimap zoom on/off" },
-                      { "/bazflightzoom", "Alias for /bfz — every subcommand works on either form" },
+                      { "/bazflightzoom", "Alias for /bfz - every subcommand works on either form" },
                   },
                 },
             },
