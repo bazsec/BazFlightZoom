@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- BazFlightZoom Core
 -- Auto-zoom camera and minimap when flying, powered by BazCore
 
